@@ -1,7 +1,9 @@
 import { Groq } from 'groq-sdk';
 import type { AIService, ChatMessage } from '../types';
 
-const groq = new Groq();
+const groq = new Groq({
+  apiKey: process.env.GROQ_API_KEY || '',
+});
 
 export const groqService: AIService = {
   name: 'Groq',
