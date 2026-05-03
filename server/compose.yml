@@ -1,34 +1,11 @@
 services:
-  # Tu nueva API de Bun
   api-service:
     image: ezemastro/ai_router:latest
     container_name: api-bun-app
     restart: unless-stopped
-    # No exponemos puertos al host por seguridad, solo Caddy accede internamente
     networks:
-      - web_network
-
-  # Proxy inverso Caddy
-  caddy:
-    image: caddy:latest
-    container_name: caddy-proxy
-    restart: unless-stopped
-    ports:
-      - "80:80"
-      - "443:443"
-    volumes:
-      - ./Caddyfile:/etc/caddy/Caddyfile
-      - caddy_data:/data
-      - caddy_config:/config
-    depends_on:
-      - api-service
-    networks:
-      - web_network
+      - proxy-network
 
 networks:
-  web_network:
-    driver: bridge
-
-volumes:
-  caddy_data:
-  caddy_config:
+  proxy-network:
+    external: true
