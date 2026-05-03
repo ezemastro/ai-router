@@ -4,6 +4,16 @@ import { openrouterService } from "./services/openrouter";
 import type { AIService, ChatMessage } from "./types";
 const port = Number(process.env.PORT ?? 3000);
 
+function getContentType(path: string) {
+  if (path.endsWith(".js")) return "application/javascript";
+  if (path.endsWith(".css")) return "text/css";
+  if (path.endsWith(".html")) return "text/html";
+  if (path.endsWith(".json")) return "application/json";
+  if (path.endsWith(".png")) return "image/png";
+  if (path.endsWith(".jpg") || path.endsWith(".jpeg")) return "image/jpeg";
+  return "application/octet-stream";
+}
+
 let services: AIService[] = [
   groqService,
   cerebrasService,
@@ -24,6 +34,22 @@ export function setServices(newServices: AIService[]) {
 
 export async function handleRequest(req: Request): Promise<Response> {
   const { pathname } = new URL(req.url);
+  // Serve minimal static frontend from ./public when running under Bun
+  if (req.method === "GET") {
+    if (pathname === "/" || pathname.startsWith("/static/")) {
+      if (typeof Bun !== "undefined") {
+        const rel = pathname === "/" ? "/index.html" : pathname.replace(/^\/static/, "");
+        const filePath = `./public${rel}`;
+        try {
+          return new Response(Bun.file(filePath), {
+            headers: { "Content-Type": getContentType(filePath) },
+          });
+        } catch (e) {
+          return new Response("Not found", { status: 404 });
+        }
+      }
+    }
+  }
   if (pathname === "/health") {
     return new Response(JSON.stringify({ status: "ok" }), {
       status: 200,
