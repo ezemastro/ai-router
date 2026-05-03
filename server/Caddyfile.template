@@ -1,0 +1,3 @@
+ai_router.mastropietro.work.gd {
+    reverse_proxy api-service:3000
+}
