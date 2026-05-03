@@ -1,0 +1,94 @@
+:root {
+  --bg: #0f1720;
+  --card: #0b1220;
+  --accent: #4f46e5;
+  --muted: #9aa4b2;
+  --text: #e6eef6
+}
+
+* {
+  box-sizing: border-box
+}
+
+html,
+body {
+  height: 100%
+}
+
+body {
+  margin: 0;
+  font-family: Inter, system-ui, Segoe UI, Roboto, 'Helvetica Neue', Arial;
+  background: linear-gradient(180deg, #071023 0%, #07172b 100%);
+  color: var(--text);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 24px
+}
+
+main {
+  width: 100%;
+  max-width: 720px;
+  background: rgba(255, 255, 255, 0.03);
+  padding: 20px;
+  border-radius: 10px;
+  box-shadow: 0 6px 18px rgba(2, 6, 23, 0.6)
+}
+
+h1 {
+  margin: 0 0 12px;
+  font-size: 18px
+}
+
+label {
+  display: block;
+  margin-bottom: 6px;
+  color: var(--muted);
+  font-size: 13px
+}
+
+textarea {
+  width: 100%;
+  padding: 12px;
+  border-radius: 8px;
+  border: 1px solid rgba(255, 255, 255, 0.04);
+  background: rgba(0, 0, 0, 0.2);
+  color: var(--text);
+  resize: vertical
+}
+
+.controls {
+  display: flex;
+  gap: 8px;
+  margin-top: 8px;
+  margin-bottom: 16px
+}
+
+button {
+  background: var(--accent);
+  color: white;
+  border: 0;
+  padding: 8px 12px;
+  border-radius: 8px;
+  cursor: pointer
+}
+
+button[disabled] {
+  opacity: 0.6;
+  cursor: default
+}
+
+button#clear {
+  background: transparent;
+  border: 1px solid rgba(255, 255, 255, 0.04);
+  color: var(--muted)
+}
+
+.output {
+  white-space: pre-wrap;
+  background: rgba(255, 255, 255, 0.02);
+  padding: 12px;
+  border-radius: 8px;
+  min-height: 120px;
+  border: 1px solid rgba(255, 255, 255, 0.02)
+}
