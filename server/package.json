@@ -1,13 +1,17 @@
 {
   "name": "server",
+  "version": "0.1.0",
   "module": "index.ts",
   "type": "module",
   "private": true,
   "scripts": {
-    "dev": "bun run ./index.ts"
+    "dev": "bun run ./index.ts",
+    "test": "vitest",
+    "deploy": "VERSION=$(node -p \"require('./package.json').version\") && docker buildx build --platform linux/amd64,linux/arm64 -t ezemastro/ai_router:latest -t ezemastro/ai_router:$VERSION --push ."
   },
   "devDependencies": {
-    "@types/bun": "latest"
+    "@types/bun": "latest",
+    "vitest": "^1.0.0"
   },
   "peerDependencies": {
     "typescript": "^5"
