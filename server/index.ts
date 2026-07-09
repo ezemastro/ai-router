@@ -1,6 +1,7 @@
 import { cerebrasService } from "./services/cerebras";
 import { groqService } from "./services/groq";
-import { openrouterService } from "./services/openrouter";
+// OpenRouter commented out — demasiado lento para el round-robin actual
+// import { openrouterService } from "./services/openrouter";
 import type { AIService, ChatMessage } from "./types";
 const port = Number(process.env.PORT ?? 3000);
 
@@ -17,7 +18,7 @@ function getContentType(path: string) {
 let services: AIService[] = [
   groqService,
   cerebrasService,
-  openrouterService
+  // openrouterService — comentado por latencia alta
 ];
 let currentServiceIndex = 0;
 
