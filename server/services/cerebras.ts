@@ -11,7 +11,7 @@ export const cerebrasService: AIService = {
     try {
       const chatCompletion = await cerebras.chat.completions.create({
         messages: messages as any,
-        model: 'llama-3.3-70b-instruct',
+        model: 'gpt-oss-120b',
         stream: true,
         max_completion_tokens: 2048,
         temperature: 0.2,
