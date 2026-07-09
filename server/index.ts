@@ -59,17 +59,26 @@ export async function handleRequest(req: Request): Promise<Response> {
   }
 
   if (req.method === "POST" && pathname === "/chat") {
-    const { messages } = (await req.json()) as { messages: ChatMessage[] };
-    const service = getNextService();
+    try {
+      const { messages } = (await req.json()) as { messages: ChatMessage[] };
+      const service = getNextService();
 
-    const stream = await service?.chat(messages);
-    return new Response(stream, {
-      headers: {
-        "Content-Type": "text/event-stream",
-        "Cache-Control": "no-cache",
-        Connection: "keep-alive",
-      },
-    });
+      const stream = await service?.chat(messages);
+      return new Response(stream, {
+        headers: {
+          "Content-Type": "text/event-stream",
+          "Cache-Control": "no-cache",
+          Connection: "keep-alive",
+        },
+      });
+    } catch (err: any) {
+      const service = services[(currentServiceIndex - 1 + services.length) % services.length];
+      console.error(`[/chat] ${service.name} falló: ${err.message}`);
+      return new Response(
+        JSON.stringify({ error: err.message || "Internal server error", provider: service.name }),
+        { status: 502, headers: { "Content-Type": "application/json" } }
+      );
+    }
   }
 
   return new Response("Not found", { status: 404 });
