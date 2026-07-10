@@ -5,6 +5,19 @@ import { groqService } from "./services/groq";
 import type { AIService, ChatMessage } from "./types";
 const port = Number(process.env.PORT ?? 3000);
 
+const corsHeaders = {
+  "Access-Control-Allow-Origin": "*",
+  "Access-Control-Allow-Methods": "GET, POST, OPTIONS",
+  "Access-Control-Allow-Headers": "*",
+};
+
+function withCors(res: Response): Response {
+  for (const [key, value] of Object.entries(corsHeaders)) {
+    res.headers.set(key, value);
+  }
+  return res;
+}
+
 function getContentType(path: string) {
   if (path.endsWith(".js")) return "application/javascript";
   if (path.endsWith(".css")) return "text/css";
@@ -35,6 +48,12 @@ export function setServices(newServices: AIService[]) {
 
 export async function handleRequest(req: Request): Promise<Response> {
   const { pathname } = new URL(req.url);
+
+  // CORS preflight
+  if (req.method === "OPTIONS") {
+    return withCors(new Response(null, { status: 204 }));
+  }
+
   // Serve minimal static frontend from ./public when running under Bun
   if (req.method === "GET") {
     if (pathname === "/" || pathname.startsWith("/static/")) {
@@ -42,20 +61,20 @@ export async function handleRequest(req: Request): Promise<Response> {
         const rel = pathname === "/" ? "/index.html" : pathname.replace(/^\/static/, "");
         const filePath = `./public${rel}`;
         try {
-          return new Response(Bun.file(filePath), {
+          return withCors(new Response(Bun.file(filePath), {
             headers: { "Content-Type": getContentType(filePath) },
-          });
+          }));
         } catch (e) {
-          return new Response("Not found", { status: 404 });
+          return withCors(new Response("Not found", { status: 404 }));
         }
       }
     }
   }
   if (pathname === "/health") {
-    return new Response(JSON.stringify({ status: "ok" }), {
+    return withCors(new Response(JSON.stringify({ status: "ok" }), {
       status: 200,
       headers: { "Content-Type": "application/json" },
-    });
+    }));
   }
 
   if (req.method === "POST" && pathname === "/chat") {
@@ -64,24 +83,24 @@ export async function handleRequest(req: Request): Promise<Response> {
       const service = getNextService();
 
       const stream = await service?.chat(messages);
-      return new Response(stream, {
+      return withCors(new Response(stream, {
         headers: {
           "Content-Type": "text/event-stream",
           "Cache-Control": "no-cache",
           Connection: "keep-alive",
         },
-      });
+      }));
     } catch (err: any) {
       const service = services[(currentServiceIndex - 1 + services.length) % services.length];
       console.error(`[/chat] ${service.name} falló: ${err.message}`);
-      return new Response(
+      return withCors(new Response(
         JSON.stringify({ error: err.message || "Internal server error", provider: service.name }),
         { status: 502, headers: { "Content-Type": "application/json" } }
-      );
+      ));
     }
   }
 
-  return new Response("Not found", { status: 404 });
+  return withCors(new Response("Not found", { status: 404 }));
 }
 
 // Start server when run directly
