@@ -11,6 +11,19 @@
     <h1>AI Router — Minimal</h1>
     <label for="input">Mensaje</label>
     <textarea id="input" rows="4" placeholder="Escribí tu mensaje aquí..."></textarea>
+    <div class="options">
+      <div>
+        <label for="model">Modelo</label>
+        <!-- Las opciones se cargan desde GET /providers al abrir la página. -->
+        <select id="model">
+          <option value="">Automático (el más rápido disponible)</option>
+        </select>
+      </div>
+      <div>
+        <label for="token">Token API (solo para modelos pagos)</label>
+        <input type="password" id="token" placeholder="Token API (solo para modelos pagos)" autocomplete="off" />
+      </div>
+    </div>
     <div class="controls">
       <button id="send">Enviar</button>
       <button id="clear">Limpiar</button>
