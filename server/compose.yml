@@ -3,6 +3,27 @@ services:
     image: ezemastro/ai_router:latest
     container_name: api-bun-app
     restart: unless-stopped
+    environment:
+      PORT: 3000
+      # Secrets use ${VAR} interpolation so Coolify shows them as editable.
+      GROQ_API_KEY: ${GROQ_API_KEY}
+      GOOGLE_API_KEY: ${GOOGLE_API_KEY}
+      NVIDIA_API_KEY: ${NVIDIA_API_KEY}
+      MISTRAL_API_KEY: ${MISTRAL_API_KEY}
+      OPENROUTER_API_KEY: ${OPENROUTER_API_KEY}
+      CEREBRAS_API_KEY: ${CEREBRAS_API_KEY}
+      DEEPSEEK_API_KEY: ${DEEPSEEK_API_KEY}
+      API_TOKEN: ${API_TOKEN}
+      # Literal values stay editable in Coolify; a self-referencing ${VAR:-}
+      # gets flagged "Managed by Docker Compose" and locked.
+      DEEPSEEK_MODEL: deepseek-chat
+      FIRST_TOKEN_TIMEOUT_MS: 8000
+    healthcheck:
+      test: ["CMD", "wget", "-qO-", "http://localhost:3000/health"]
+      interval: 30s
+      timeout: 3s
+      retries: 3
+      start_period: 5s
     networks:
       - proxy-network
 
