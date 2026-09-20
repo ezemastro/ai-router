@@ -1,11 +1,35 @@
+# Coolify deployment: builds the image from this repo, no host port mapping.
+# This is the only deployment target — Coolify owns the proxy, TLS and domain.
+#
+# In Coolify: create a "Docker Compose" application from the git repository,
+# set Base Directory to /server and Docker Compose Location to
+# /server/compose.yml, then map your domain to the `app` service.
+#
+# Deliberately absent:
+#   - `ports:`    Coolify's proxy reaches the container over its own network.
+#                 Publishing a host port here bypasses the proxy and TLS.
+#   - `networks:` Coolify attaches the container to its proxy network and
+#                 generates the Traefik labels. Declaring an external network
+#                 that Coolify does not manage fails the deployment outright.
+#   - the domain  It is configured in Coolify's UI against the service name,
+#                 not in this file.
+
 services:
-  api-service:
-    image: ezemastro/ai_router:latest
-    container_name: api-bun-app
+  app:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: ai-router
     restart: unless-stopped
+    # Required: Coolify picks the domain's target port from `expose`.
+    # Without it the proxy has no port to route to.
+    expose:
+      - "3000"
     environment:
       PORT: 3000
-      # Secrets use ${VAR} interpolation so Coolify shows them as editable.
+      # Secrets use ${VAR} interpolation so Coolify lists them as editable
+      # variables. Leave them unset to drop a provider from the rotation —
+      # a provider with no key does not register at all.
       GROQ_API_KEY: ${GROQ_API_KEY}
       GOOGLE_API_KEY: ${GOOGLE_API_KEY}
       NVIDIA_API_KEY: ${NVIDIA_API_KEY}
@@ -13,20 +37,16 @@ services:
       OPENROUTER_API_KEY: ${OPENROUTER_API_KEY}
       CEREBRAS_API_KEY: ${CEREBRAS_API_KEY}
       DEEPSEEK_API_KEY: ${DEEPSEEK_API_KEY}
+      # Bearer token gating the paid providers (DeepSeek).
       API_TOKEN: ${API_TOKEN}
       # Literal values stay editable in Coolify; a self-referencing ${VAR:-}
       # gets flagged "Managed by Docker Compose" and locked.
       DEEPSEEK_MODEL: deepseek-chat
       FIRST_TOKEN_TIMEOUT_MS: 8000
     healthcheck:
+      # BusyBox wget, present in the oven/bun:alpine base image.
       test: ["CMD", "wget", "-qO-", "http://localhost:3000/health"]
       interval: 30s
       timeout: 3s
       retries: 3
-      start_period: 5s
-    networks:
-      - proxy-network
-
-networks:
-  proxy-network:
-    external: true
+      start_period: 10s

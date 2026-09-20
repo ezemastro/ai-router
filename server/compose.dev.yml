@@ -1,4 +1,8 @@
+# Local development overlay: publishes the port so the host can reach the
+# container directly. Production never maps a port — Coolify's proxy handles it.
+#
+#   docker compose -f compose.yml -f compose.dev.yml up -d --build
 services:
-  api-service:
+  app:
     ports:
       - "3000:3000"

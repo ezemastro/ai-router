@@ -1,0 +1,19 @@
+# The Dockerfile runs `bun install` and then `COPY . .`. Without this file a
+# local build copies the host's node_modules over the freshly installed ones —
+# including native binaries built for the host's architecture.
+node_modules
+bun.lock
+
+# Never bake secrets into an image layer.
+.env
+.env.*
+
+# Not needed at runtime.
+tests
+.gitignore
+.dockerignore
+compose*.yml
+Caddyfile.template
+*.md
+coverage
+*.log

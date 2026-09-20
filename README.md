@@ -255,28 +255,37 @@ cd server
 npx vitest run     # or: bun run test
 ```
 
-## Deploy (Docker)
+## Deploy (Coolify)
 
-The container listens on port **3000** (internal). It is **not** mapped to the host — Caddy reaches it through the Docker network (`reverse_proxy api-service:3000`), so no host port has to be free.
+Coolify is the only deployment target. It builds the image from this repository,
+owns the reverse proxy, TLS and the domain, so `server/compose.yml` publishes no
+host port and declares no external network.
+
+Create a **Docker Compose** application from the git repository and set:
+
+| Setting | Value |
+|---------|-------|
+| Base Directory | `/server` |
+| Docker Compose Location | `/server/compose.yml` |
+| Domain | mapped to the `app` service |
+
+Then fill the API keys in Coolify's environment variables tab and deploy.
+
+- Secrets use `${VAR}` interpolation so Coolify lists them as editable variables.
+  Leave a provider's key blank to drop it from the rotation entirely.
+- Fixed config uses **literal values** (`DEEPSEEK_MODEL: deepseek-chat`,
+  `FIRST_TOKEN_TIMEOUT_MS: 8000`). A self-referencing `${DEEPSEEK_MODEL:-}` gets
+  flagged "Managed by Docker Compose" and locked out of the UI.
+- `expose: "3000"` is **required**: Coolify reads the domain's target port from
+  it. Without `expose` the proxy has no port to route to.
+- Do **not** add `ports:` or a `networks:` block. Publishing a host port bypasses
+  the proxy and TLS, and declaring an external network Coolify does not manage
+  fails the deployment outright.
+- The healthcheck hits `GET /health`, so Coolify reports healthy/unhealthy.
+
+**Local run** (when you want the container reachable from the host):
 
 ```bash
 cd server
-docker build -t ai-router .
-docker compose up -d   # production: no host port mapping, Caddy proxies via proxy-network
+docker compose -f compose.yml -f compose.dev.yml up -d --build   # maps 3000:3000
 ```
-
-**Local development** (you need direct access from the host):
-
-```bash
-cd server
-docker compose -f compose.yml -f compose.dev.yml up -d   # maps 3000:3000
-```
-
-### Deploying via Coolify
-
-The compose file is the source of truth: paste `compose.yml` into Coolify and manage the image via `npm run deploy` (build + push to Docker Hub).
-
-- Use `${VAR}` interpolation for secrets (`GROQ_API_KEY`, `GOOGLE_API_KEY`, `API_TOKEN`, ...) — Coolify detects them and makes them editable in its UI.
-- Use **literal values** for fixed config like `DEEPSEEK_MODEL: deepseek-chat` and `FIRST_TOKEN_TIMEOUT_MS: 8000`. A self-referencing `${DEEPSEEK_MODEL:-}` gets flagged "Managed by Docker Compose" and locked (not editable in the UI).
-- The container listens on internal port `3000`, no host mapping needed — assign a domain in Coolify's UI (its proxy reaches the container by name), or use the `proxy-network` with an external Caddy.
-- Healthcheck hits `GET /health` so Coolify shows healthy/unhealthy.

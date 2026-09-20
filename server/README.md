@@ -100,22 +100,28 @@ Tests import `handleRequest` directly (the server only starts when `index.ts` is
 
 ## Docker
 
-```bash
-docker build -t ai-router .
-docker compose up -d
-```
-
-The container listens on **3000** (internal, not mapped to the host — Caddy proxies `api-service:3000` via the Docker network). For local access from the host, map the port explicitly:
+`compose.yml` is the Coolify deployment file: it builds the image from this
+directory, exposes `3000` to the proxy and maps no host port.
 
 ```bash
-docker compose -f compose.yml -f compose.dev.yml up -d   # maps 3000:3000
+# local, reachable from the host
+docker compose -f compose.yml -f compose.dev.yml up -d --build
 ```
 
 ### Coolify
 
-The compose file is the source of truth — paste it into Coolify, deploy with `npm run deploy` (build + push to Docker Hub), then redeploy.
+Create a **Docker Compose** application from the git repository with Base
+Directory `/server`, Docker Compose Location `/server/compose.yml`, and the
+domain mapped to the `app` service. Coolify builds the image, terminates TLS and
+routes to the container — there is no external reverse proxy to configure.
 
-- Secrets (`GROQ_API_KEY`, `GOOGLE_API_KEY`, `NVIDIA_API_KEY`, `MISTRAL_API_KEY`, `OPENROUTER_API_KEY`, `API_TOKEN`, ...) use `${VAR}` interpolation so Coolify shows them as editable variables in its UI.
-- Fixed config uses literal values (`DEEPSEEK_MODEL: deepseek-chat`, `FIRST_TOKEN_TIMEOUT_MS: 8000`). A self-referencing `${DEEPSEEK_MODEL:-}` gets locked as "Managed by Docker Compose" and cannot be edited in the UI.
-- No host port mapping needed: the container listens on internal `3000`; Coolify's proxy reaches it by container name (assign a domain in the UI) or via `proxy-network` with an external Caddy.
+- Secrets (`GROQ_API_KEY`, `GOOGLE_API_KEY`, `NVIDIA_API_KEY`, `MISTRAL_API_KEY`,
+  `OPENROUTER_API_KEY`, `API_TOKEN`, ...) use `${VAR}` interpolation so Coolify
+  shows them as editable variables. An unset key drops that provider entirely.
+- Fixed config uses literal values (`DEEPSEEK_MODEL: deepseek-chat`,
+  `FIRST_TOKEN_TIMEOUT_MS: 8000`). A self-referencing `${DEEPSEEK_MODEL:-}` gets
+  locked as "Managed by Docker Compose" and cannot be edited in the UI.
+- `expose: "3000"` is required — Coolify reads the domain's target port from it.
+- Never add `ports:` or a `networks:` block: a published port bypasses the proxy
+  and TLS, and an external network Coolify does not manage fails the deploy.
 - The healthcheck hits `GET /health`, so Coolify reports healthy/unhealthy.
