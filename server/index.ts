@@ -1,8 +1,12 @@
 import { createHash, timingSafeEqual } from "node:crypto";
 import { buildProviders } from "./providers/registry";
 import {
+  type FailureInfo,
   describeFailure,
+  isModelLevelFailure,
   orderCandidates,
+  planModelAttempts,
+  recordDeadModel,
   recordFailure,
   recordFirstToken,
   recordThroughput,
@@ -86,7 +90,12 @@ function isAuthorized(req: Request): boolean {
 function toSSEStream(
   service: AIService,
   iterator: AsyncIterator<string>,
-  options: { bufferedFirst?: string; firstTokenAt?: number; startedAt: number },
+  options: {
+    bufferedFirst?: string;
+    firstTokenAt?: number;
+    startedAt: number;
+    model?: string;
+  },
 ): ReadableStream<Uint8Array> {
   const encoder = new TextEncoder();
   const id = serviceId(service);
@@ -108,7 +117,7 @@ function toSSEStream(
           if (!chunk) continue;
           if (firstTokenAt === undefined) {
             firstTokenAt = Date.now();
-            recordFirstToken(id, firstTokenAt - options.startedAt);
+            recordFirstToken(id, firstTokenAt - options.startedAt, options.model);
           }
           chunkCount += 1;
           controller.enqueue(encoder.encode(`data: ${chunk}\n\n`));
@@ -149,6 +158,8 @@ function streamHeaders(service: AIService): Record<string, string> {
 
 interface Attempt {
   provider: string;
+  /** Model this attempt used; null when the provider has no model list. */
+  model: string | null;
   status: number | null;
   reason: string;
 }
@@ -161,7 +172,7 @@ type CandidateResult =
       startedAt: number;
       firstTokenAt: number;
     }
-  | { ok: false; attempt: Attempt };
+  | { ok: false; attempt: Attempt; info: FailureInfo };
 
 /** Drains empty deltas until the first real token, or the stream ends. */
 async function pullFirstToken(iterator: AsyncIterator<string>): Promise<string | null> {
@@ -177,7 +188,10 @@ const TIMED_OUT = Symbol("first-token-timeout");
 /**
  * Starts a request and waits for its first content token before committing
  * anything to the client. Only a provider that actually produced a token wins
- * the response; everything else is recorded as a failure and skipped.
+ * the response.
+ *
+ * Failures are described but NOT recorded here: the caller decides whether a
+ * failure condemns one model or the whole provider.
  */
 async function tryCandidate(
   service: AIService,
@@ -187,14 +201,22 @@ async function tryCandidate(
 ): Promise<CandidateResult> {
   const controller = new AbortController();
   const startedAt = Date.now();
+  const failed = (info: FailureInfo): CandidateResult => ({
+    ok: false,
+    info,
+    attempt: {
+      provider: service.name,
+      model: model ?? null,
+      status: info.status ?? null,
+      reason: info.reason,
+    },
+  });
 
   let iterable: AsyncIterable<string>;
   try {
     iterable = await service.chat(messages, model, controller.signal);
   } catch (err) {
-    const info = describeFailure(err, model);
-    recordFailure(service, info);
-    return { ok: false, attempt: { provider: service.name, status: info.status ?? null, reason: info.reason } };
+    return failed(describeFailure(err, model));
   }
 
   const iterator = iterable[Symbol.asyncIterator]();
@@ -213,9 +235,7 @@ async function tryCandidate(
   } catch (err) {
     clearTimeout(timer);
     controller.abort();
-    const info = describeFailure(err, model);
-    recordFailure(service, info);
-    return { ok: false, attempt: { provider: service.name, status: info.status ?? null, reason: info.reason } };
+    return failed(describeFailure(err, model));
   }
   clearTimeout(timer);
 
@@ -226,12 +246,11 @@ async function tryCandidate(
       outcome === TIMED_OUT
         ? `no first token within ${timeoutMs}ms`
         : "stream closed without emitting any token";
-    recordFailure(service, { reason, model });
-    return { ok: false, attempt: { provider: service.name, status: null, reason } };
+    return failed({ reason, model });
   }
 
   const firstTokenAt = Date.now();
-  recordFirstToken(serviceId(service), firstTokenAt - startedAt);
+  recordFirstToken(serviceId(service), firstTokenAt - startedAt, model);
   return { ok: true, first: outcome, iterator, startedAt, firstTokenAt };
 }
 
@@ -264,11 +283,14 @@ async function handleChat(req: Request): Promise<Response> {
     try {
       const stream = await service.chat(messages, body.model);
       return withCors(new Response(
-        toSSEStream(service, stream[Symbol.asyncIterator](), { startedAt }),
+        toSSEStream(service, stream[Symbol.asyncIterator](), { startedAt, model: body.model }),
         { headers: streamHeaders(service) },
       ));
     } catch (err: any) {
       const info = describeFailure(err, body.model);
+      // A pinned model never walks the list — the caller asked for this exact
+      // model — but a dead ID is still worth remembering for /providers.
+      if (isModelLevelFailure(info.status)) recordDeadModel(service, body.model, info);
       recordFailure(service, info);
       console.error(`[/chat] ${service.name} falló: ${err?.message ?? err}`);
       return jsonResponse(
@@ -289,31 +311,63 @@ async function handleChat(req: Request): Promise<Response> {
   const attempts: Attempt[] = [];
 
   for (const candidate of candidates) {
-    const result = await tryCandidate(candidate, messages, undefined, timeoutMs);
-    if (result.ok) {
-      return withCors(new Response(
-        toSSEStream(candidate, result.iterator, {
-          bufferedFirst: result.first,
-          firstTokenAt: result.firstTokenAt,
-          startedAt: result.startedAt,
-        }),
-        { headers: streamHeaders(candidate) },
-      ));
+    // A dead model ID must not cost the provider its slot, so the cascade walks
+    // the provider's own list first — last-good model first, dead IDs last.
+    const plan = planModelAttempts(candidate, candidate.models);
+    // A provider with no model list still gets one attempt, so it reports its
+    // own error instead of silently disappearing from the cascade.
+    const planned: Array<string | undefined> = plan.length > 0 ? plan : [undefined];
+    let exhaustedBy: FailureInfo | undefined;
+
+    for (const model of planned) {
+      const result = await tryCandidate(candidate, messages, model, timeoutMs);
+      if (result.ok) {
+        return withCors(new Response(
+          toSSEStream(candidate, result.iterator, {
+            bufferedFirst: result.first,
+            firstTokenAt: result.firstTokenAt,
+            startedAt: result.startedAt,
+            model,
+          }),
+          { headers: streamHeaders(candidate) },
+        ));
+      }
+      attempts.push(result.attempt);
+
+      if (isModelLevelFailure(result.info.status)) {
+        // The model is gone, the provider may not be: try its next model.
+        recordDeadModel(candidate, model, result.info);
+        exhaustedBy = result.info;
+        continue;
+      }
+
+      // Provider-level: cool the whole provider down and move on.
+      recordFailure(candidate, result.info);
+      exhaustedBy = undefined;
+      break;
     }
-    attempts.push(result.attempt);
+
+    // Every model of this provider is gone — now the provider itself cools down.
+    if (exhaustedBy) recordFailure(candidate, exhaustedBy);
   }
 
   // Everything in cooldown is reported too, so a total failure stays diagnosable.
   const skipped = free.filter((s) => !candidates.includes(s));
   for (const service of skipped) {
-    attempts.push({ provider: service.name, status: null, reason: "in cooldown, skipped" });
+    attempts.push({ provider: service.name, model: null, status: null, reason: "in cooldown, skipped" });
   }
 
-  const lastProvider = attempts[attempts.length - 1]?.provider ?? free[0]!.name;
   console.error(`[/chat] every free provider failed: ${attempts.map((a) => `${a.provider}=${a.status ?? "-"}`).join(", ")}`);
+
+  // Naming the last provider in the cascade blames whoever happened to be last;
+  // only a single-provider failure may be attributed to that provider.
+  const involved = [...new Set(attempts.map((a) => a.provider))];
+  const soleProvider = involved.length === 1 ? involved[0]! : null;
   // Total failure answers JSON, never text/event-stream — clients detect it by content-type.
   return jsonResponse(
-    { error: `Proveedor ${lastProvider} falló`, provider: lastProvider, attempts },
+    soleProvider
+      ? { error: `Proveedor ${soleProvider} falló`, provider: soleProvider, attempts }
+      : { error: "Todos los proveedores gratuitos fallaron", provider: null, attempts },
     502,
   );
 }

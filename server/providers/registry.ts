@@ -9,7 +9,10 @@ import { getDiscoveredFreeModels, scheduleOpenRouterRefresh } from './openrouter
  * overridable with `<PREFIX>_MODELS` (comma-separated) so a provider
  * deprecation is a config change rather than a code change.
  *
- * Free-tier facts verified 2026-09-20 — see README for the limits table.
+ * Free-tier facts and model IDs verified 2026-09-21 — see README for the
+ * limits table. Free-tier model IDs rot fast: when one dies the router now
+ * walks to the provider's next model, and `<PREFIX>_MODELS` is the escape
+ * hatch that fixes it without a deploy.
  */
 export interface ProviderDescriptor {
   id: string;
@@ -66,7 +69,10 @@ export const PROVIDER_DESCRIPTORS: ProviderDescriptor[] = [
     apiKeyEnv: 'GOOGLE_API_KEY',
     modelsEnv: 'GOOGLE_MODELS',
     // Free tier covers Flash and Flash-Lite only; Pro left it on 2026-04-01.
-    models: ['gemini-2.5-flash-lite', 'gemini-2.5-flash'],
+    // Both gemini-2.5-* IDs were retired for new users: the live API answered
+    // 404 "no longer available to new users ... use models/gemini-3.5-flash-lite"
+    // (observed 2026-09-21). That error message is the source of the first ID.
+    models: ['gemini-3.5-flash-lite', 'gemini-3.1-flash-lite', 'gemini-3.5-flash'],
     requiresAuth: false,
     maxTokensField: 'max_tokens',
     speedRank: 3,
@@ -88,7 +94,14 @@ export const PROVIDER_DESCRIPTORS: ProviderDescriptor[] = [
     baseUrl: 'https://integrate.api.nvidia.com/v1',
     apiKeyEnv: 'NVIDIA_API_KEY',
     modelsEnv: 'NVIDIA_MODELS',
-    models: ['openai/gpt-oss-120b'],
+    // openai/gpt-oss-120b reached end of life on 2026-09-03 (the API answers
+    // 410 Gone). These three are present in the live unauthenticated catalogue
+    // (GET https://integrate.api.nvidia.com/v1/models, checked 2026-09-21).
+    models: [
+      'openai/gpt-oss-20b',
+      'nvidia/nemotron-3.5-lightning-30b-a3b',
+      'nvidia/nemotron-nano-3-30b-a3b',
+    ],
     requiresAuth: false,
     maxTokensField: 'max_completion_tokens',
     speedRank: 5,

@@ -40,6 +40,9 @@ describe('scheduler cooldowns', () => {
     [403, 30 * MINUTE],
     [402, 60 * MINUTE],
     [404, 30 * MINUTE],
+    // 410 shares the 404 cooldown so a provider exhausted of models is not
+    // re-walked every few seconds, paying a round-trip per dead model.
+    [410, 30 * MINUTE],
   ])('status %i cools down for %i ms', (status, expected) => {
     const service = svc('p', 1);
     recordFailure(service, { status, reason: 'x' }, now);

@@ -8,6 +8,12 @@ import { type AIService, serviceId } from '../types';
  * streaming proxy TTFT is what a caller actually perceives as "fast". Tokens
  * per second is tracked too, but purely for observability — it deliberately
  * does NOT influence candidate order.
+ *
+ * Failures come in two flavours. A *model-level* failure (404 / 410) condemns
+ * one model ID, not the provider: free-tier catalogues rotate constantly, and
+ * a provider listing four models should not be knocked out by one dead ID.
+ * Everything else (401/402/403/429/5xx/network/timeout) is *provider-level*
+ * and feeds the cooldown table below.
  */
 
 const TTFT_ALPHA = 0.3;
@@ -15,11 +21,24 @@ const THROUGHPUT_ALPHA = 0.3;
 
 const AUTH_COOLDOWN_MS = 30 * 60 * 1000; // 401 / 403 — a bad key will stay bad.
 const PAYMENT_COOLDOWN_MS = 60 * 60 * 1000; // 402 — out of credit.
-const NOT_FOUND_COOLDOWN_MS = 30 * 60 * 1000; // 404 — model ID likely deprecated.
+const NOT_FOUND_COOLDOWN_MS = 30 * 60 * 1000; // 404 / 410 — model ID deprecated or gone.
 const RATE_LIMIT_BASE_MS = 60 * 1000;
 const RATE_LIMIT_MAX_MS = 15 * 60 * 1000;
 const TRANSIENT_BASE_MS = 5 * 1000;
 const TRANSIENT_MAX_MS = 5 * 60 * 1000;
+
+/**
+ * Hard ceiling on how many models of one provider a single request may try.
+ * The provider's own list length is the usual bound, but OpenRouter's `:free`
+ * discovery can return dozens of IDs and each attempt costs a full first-token
+ * timeout, so the walk is clamped.
+ */
+export const MAX_MODEL_ATTEMPTS_PER_PROVIDER = 4;
+
+/** 404/410 mean "this model is gone", not "this provider is down". */
+export function isModelLevelFailure(status: number | undefined): boolean {
+  return status === 404 || status === 410;
+}
 
 export interface FailureInfo {
   /** HTTP status when the failure came from the provider; omitted for network/timeouts. */
@@ -27,7 +46,7 @@ export interface FailureInfo {
   /** Short, already-sanitized reason. Never a raw provider body. */
   reason: string;
   retryAfterMs?: number;
-  /** Model that was being requested, used only for the 404 diagnostic log. */
+  /** Model this failure belongs to: drives the dead-model set and the 404/410 log. */
   model?: string;
 }
 
@@ -37,6 +56,12 @@ interface ProviderState {
   consecutiveFailures: number;
   cooldownUntil: number;
   lastError?: string;
+  /** Model IDs that answered 404/410. Survives provider recovery. */
+  deadModels: Set<string>;
+  /** Last model of this provider that produced a first token. */
+  activeModel?: string;
+  /** Signature of the model list the two fields above were learned from. */
+  modelsSignature?: string;
 }
 
 const states = new Map<string, ProviderState>();
@@ -44,7 +69,7 @@ const states = new Map<string, ProviderState>();
 function stateOf(id: string): ProviderState {
   let state = states.get(id);
   if (!state) {
-    state = { consecutiveFailures: 0, cooldownUntil: 0 };
+    state = { consecutiveFailures: 0, cooldownUntil: 0, deadModels: new Set() };
     states.set(id, state);
   }
   return state;
@@ -64,13 +89,75 @@ export function resetScheduler(): void {
   states.clear();
 }
 
-/** A first token arrived: the provider is healthy again. */
-export function recordFirstToken(id: string, ttftMs: number): void {
+/**
+ * A first token arrived: the provider is healthy again.
+ *
+ * `model` is remembered as the provider's last-good model so the next request
+ * starts there instead of re-walking a dead prefix. The dead-model set is NOT
+ * cleared — one working model does not resurrect the others — but the model
+ * that just worked is removed from it.
+ */
+export function recordFirstToken(id: string, ttftMs: number, model?: string): void {
   const state = stateOf(id);
   state.ttftMs = ewma(state.ttftMs, ttftMs, TTFT_ALPHA);
   state.consecutiveFailures = 0;
   state.cooldownUntil = 0;
   state.lastError = undefined;
+  if (model) {
+    state.activeModel = model;
+    state.deadModels.delete(model);
+  }
+}
+
+/**
+ * Forgets the per-model memory when the resolved model list changes, so an
+ * env override or a fresh OpenRouter discovery starts from a clean slate.
+ */
+function syncModels(id: string, models: string[]): ProviderState {
+  const state = stateOf(id);
+  const signature = models.join('\u0000');
+  if (state.modelsSignature !== signature) {
+    state.modelsSignature = signature;
+    state.deadModels.clear();
+    state.activeModel = undefined;
+  }
+  return state;
+}
+
+/**
+ * Order in which one provider's models should be tried for a single request:
+ * the last-good model first, then never-failed models in list order, then the
+ * known-dead ones last. Dead IDs are demoted rather than dropped so a provider
+ * that resurrects a model can recover without a restart, and the whole walk is
+ * clamped by `MAX_MODEL_ATTEMPTS_PER_PROVIDER`.
+ */
+export function planModelAttempts(service: AIService, models: string[]): string[] {
+  const state = syncModels(serviceId(service), models);
+  const unique = [...new Set(models.filter(Boolean))];
+  const active = state.activeModel && unique.includes(state.activeModel) ? state.activeModel : undefined;
+  const rest = unique.filter((model) => model !== active);
+  const ordered = [
+    ...(active ? [active] : []),
+    ...rest.filter((model) => !state.deadModels.has(model)),
+    ...rest.filter((model) => state.deadModels.has(model)),
+  ];
+  return ordered.slice(0, MAX_MODEL_ATTEMPTS_PER_PROVIDER);
+}
+
+/**
+ * One model of a provider is gone (404/410). This is deliberately quiet and
+ * costs no cooldown: the caller moves on to the provider's next model, and
+ * only an exhausted provider reaches `recordFailure`.
+ */
+export function recordDeadModel(service: AIService, model: string | undefined, info: FailureInfo): void {
+  if (!model) return;
+  const state = stateOf(serviceId(service));
+  state.deadModels.add(model);
+  if (state.activeModel === model) state.activeModel = undefined;
+  console.warn(
+    `[scheduler] ${service.name} model "${model}" is gone (${info.status ?? '-'}); ` +
+      `trying the provider's next model`,
+  );
 }
 
 /** Observability only — never used for ordering. */
@@ -83,7 +170,10 @@ export function recordThroughput(id: string, tokensPerSec: number): void {
 function cooldownFor(status: number | undefined, info: FailureInfo, streak: number): number {
   if (status === 401 || status === 403) return AUTH_COOLDOWN_MS;
   if (status === 402) return PAYMENT_COOLDOWN_MS;
-  if (status === 404) return NOT_FOUND_COOLDOWN_MS;
+  // 410 shares the 404 cooldown: a provider exhausted of models must not be
+  // re-walked on a 5s transient backoff, paying a round-trip per dead model
+  // on every request.
+  if (status === 404 || status === 410) return NOT_FOUND_COOLDOWN_MS;
   if (status === 429) {
     const base = info.retryAfterMs && info.retryAfterMs > 0 ? info.retryAfterMs : RATE_LIMIT_BASE_MS;
     return backoff(base, RATE_LIMIT_MAX_MS, streak);
@@ -102,11 +192,14 @@ export function recordFailure(service: AIService, info: FailureInfo, now = Date.
   );
   state.cooldownUntil = now + cooldownFor(info.status, info, state.consecutiveFailures);
 
-  if (info.status === 404) {
+  if (isModelLevelFailure(info.status)) {
+    // Reached only once the provider has no model left to try, so this stays a
+    // one-per-provider alarm instead of one line per model attempt.
     console.error(
-      `[scheduler] ${service.name} returned 404 for model "${info.model ?? 'unknown'}" — ` +
-        `the model ID is probably deprecated. Update the built-in list or set the ` +
-        `provider's *_MODELS env override. Cooling down for 30 min.`,
+      `[scheduler] ${service.name} ran out of working models — the last attempt ` +
+        `("${info.model ?? 'unknown'}") returned ${info.status}, so the model ID is ` +
+        `probably deprecated. Update the built-in list or set the provider's ` +
+        `*_MODELS env override. Cooling down until ${new Date(state.cooldownUntil).toISOString()}.`,
     );
   } else {
     console.warn(
@@ -175,6 +268,10 @@ export interface ProviderSnapshot {
   tokensPerSec: number | null;
   consecutiveFailures: number;
   lastError: string | null;
+  /** Model IDs that answered 404/410 — the dead ones, in the order they died. */
+  deadModels: string[];
+  /** Model that last produced a first token, tried first on the next request. */
+  activeModel: string | null;
 }
 
 /**
@@ -183,11 +280,13 @@ export interface ProviderSnapshot {
  */
 export function snapshot(services: AIService[], now = Date.now()): ProviderSnapshot[] {
   return services.map((service) => {
-    const state = stateOf(serviceId(service));
+    const models = service.models;
+    // Keeps the reported dead/active models honest after a list change.
+    const state = syncModels(serviceId(service), models);
     return {
       id: serviceId(service),
       label: service.name,
-      models: service.models,
+      models,
       requiresAuth: Boolean(service.requiresAuth),
       // Registered at all means the key was present when the registry was built.
       configured: true,
@@ -198,6 +297,8 @@ export function snapshot(services: AIService[], now = Date.now()): ProviderSnaps
       tokensPerSec: state.tokensPerSec === undefined ? null : Math.round(state.tokensPerSec * 10) / 10,
       consecutiveFailures: state.consecutiveFailures,
       lastError: state.lastError ?? null,
+      deadModels: [...state.deadModels],
+      activeModel: state.activeModel ?? null,
     };
   });
 }
