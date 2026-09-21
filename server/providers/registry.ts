@@ -118,7 +118,7 @@ export const PROVIDER_DESCRIPTORS: ProviderDescriptor[] = [
     maxTokensField: 'max_tokens',
     speedRank: 6,
     extraHeaders: {
-      'HTTP-Referer': 'https://ai-router.mastropietro.work.gd',
+      'HTTP-Referer': 'https://ai-router.becode.com.ar',
       'X-Title': 'AI Router',
     },
   },

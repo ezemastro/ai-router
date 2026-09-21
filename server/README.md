@@ -115,7 +115,7 @@ docker compose -f compose.yml -f compose.dev.yml up -d --build
 ### Coolify
 
 Create a **Docker Compose** application from the git repository with Base
-Directory `/server`, Docker Compose Location `/server/compose.yml`, and the
+Directory `/server`, Docker Compose Location `/compose.yml`, and the
 domain mapped to the `app` service. Coolify builds the image, terminates TLS and
 routes to the container — there is no external reverse proxy to configure.
 
@@ -128,4 +128,6 @@ routes to the container — there is no external reverse proxy to configure.
 - `expose: "3000"` is required — Coolify reads the domain's target port from it.
 - Never add `ports:` or a `networks:` block: a published port bypasses the proxy
   and TLS, and an external network Coolify does not manage fails the deploy.
+- Coolify **concatenates** Base Directory and Docker Compose Location, so the
+  location is `/compose.yml` and not `/server/compose.yml`.
 - The healthcheck hits `GET /health`, so Coolify reports healthy/unhealthy.

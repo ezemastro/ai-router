@@ -2,8 +2,9 @@
 # This is the only deployment target — Coolify owns the proxy, TLS and domain.
 #
 # In Coolify: create a "Docker Compose" application from the git repository,
-# set Base Directory to /server and Docker Compose Location to
-# /server/compose.yml, then map your domain to the `app` service.
+# set Base Directory to /server and Docker Compose Location to /compose.yml,
+# then map your domain to the `app` service. Coolify concatenates the two,
+# so /server/compose.yml would resolve to /server/server/compose.yml.
 #
 # Deliberately absent:
 #   - `ports:`    Coolify's proxy reaches the container over its own network.

@@ -2,12 +2,12 @@
 
 Latency-aware proxy that fans a chat request out over several LLM providers. Every call to `/chat` is tried against the fastest healthy provider first and **fails over** — first to that provider's next model if the model ID is dead, then to the next provider if the provider itself errors, rate-limits, or does not produce a first token in time. You can also pin a specific model per request.
 
-**Base URL:** `https://ai-router.mastropietro.work.gd`
+**Base URL:** `https://ai-router.becode.com.ar`
 
 ## Quickstart
 
 ```bash
-curl -X POST https://ai-router.mastropietro.work.gd/chat \
+curl -X POST https://ai-router.becode.com.ar/chat \
   -H "Content-Type: application/json" \
   -d '{
     "messages": [
@@ -59,7 +59,7 @@ A successful first token resets that provider's failure streak, clears its coold
 ### `GET /health`
 
 ```bash
-curl https://ai-router.mastropietro.work.gd/health
+curl https://ai-router.becode.com.ar/health
 ```
 
 ```json
@@ -71,7 +71,7 @@ curl https://ai-router.mastropietro.work.gd/health
 Health, latency and routing snapshot. No secrets, no raw provider bodies. This is what makes the "routes to the fastest" claim verifiable.
 
 ```bash
-curl https://ai-router.mastropietro.work.gd/providers
+curl https://ai-router.becode.com.ar/providers
 ```
 
 ```json
@@ -133,7 +133,7 @@ curl https://ai-router.mastropietro.work.gd/providers
 **Auth (paid models):** providers marked `requiresAuth: true` (currently only DeepSeek) require a bearer token:
 
 ```bash
-curl -X POST https://ai-router.mastropietro.work.gd/chat \
+curl -X POST https://ai-router.becode.com.ar/chat \
   -H "Content-Type: application/json" \
   -H "Authorization: Bearer $API_TOKEN" \
   -d '{
@@ -180,6 +180,13 @@ One `attempts` entry per *model* attempt, so a provider that walked its list app
 ```
 
 A **pinned** model that fails answers the same `"Proveedor <name> falló"` with `provider`, and no `attempts` — there was only ever one.
+
+> **Behind Cloudflare, the 502 body never reaches the client.** Cloudflare
+> replaces an origin `502` with its own `error code: 502` plain-text page, so
+> the JSON detail (`error`, `attempts`) is lost and `content-type` comes back as
+> `text/plain`. A client can still detect total failure from the status code,
+> but not read which providers were tried — use `GET /providers` for that, or
+> set the DNS record to DNS-only (grey cloud) to get the body through.
 
 Raw provider bodies are never echoed beyond a sanitized snippet capped at 300 characters, and API keys never appear in a response or a log.
 
@@ -304,10 +311,18 @@ Create a **Docker Compose** application from the git repository and set:
 | Setting | Value |
 |---------|-------|
 | Base Directory | `/server` |
-| Docker Compose Location | `/server/compose.yml` |
+| Docker Compose Location | `/compose.yml` |
 | Domain | mapped to the `app` service |
 
 Then fill the API keys in Coolify's environment variables tab and deploy.
+
+> **Coolify concatenates Base Directory and Docker Compose Location.** With
+> base `/server`, the location must be `/compose.yml`, not `/server/compose.yml`
+> — the latter makes it look for `/server/server/compose.yml` and the deploy
+> fails with "Docker Compose file not found".
+
+An application created from a public repository has no GitHub App behind it,
+so `git push` triggers nothing. Redeploy from the UI or wire up a webhook.
 
 - Secrets use `${VAR}` interpolation so Coolify lists them as editable variables.
   Leave a provider's key blank to drop it from the rotation entirely.
